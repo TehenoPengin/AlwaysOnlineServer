@@ -43,7 +43,7 @@ public class AlwaysOnlineHost
 		if(listener != null)
 			throw new IllegalStateException("Host already started!");
 		scheduler = Executors.newScheduledThreadPool(1);
-		scheduler.schedule(this::handleClientChecks, 30, TimeUnit.SECONDS);
+		scheduler.scheduleAtFixedRate(this::handleClientChecks, 20, 30, TimeUnit.SECONDS);
 		listener = new Thread(this::handleServerThread);
 		listener.setName("AlwaysOnlineHostMain");
 		listener.start();
@@ -59,6 +59,7 @@ public class AlwaysOnlineHost
 			{
 				hosts.remove(i);
 				pointers.remove(host.player.toLowerCase());
+				System.out.println("Removed " + host.player);
 				--i;
 			}
 		}
@@ -72,93 +73,7 @@ public class AlwaysOnlineHost
 			{
 				try(Socket c = s.accept())
 				{
-					DataInputStream dis = new DataInputStream(c.getInputStream());
-					DataOutputStream dos = new DataOutputStream(c.getOutputStream());
-					
-					switch(dis.readByte())
-					{
-					case 0:
-					{
-						// Get amount of hosting players
-						dos.writeInt(hosts.size());
-					}
-					break;
-					case 1:
-					{
-						// Get by index
-						int i = dis.readInt();
-						if(i >= 0 && i < hosts.size())
-						{
-							OnlineHost host = hosts.get(i);
-							StringBuilder reply = new StringBuilder("{");
-							if(host.passwordMD5 != null)
-								reply.append("\"password\":\"" + host.passwordMD5 + "\",");
-							reply.append("\"owner\":\"" + host.player + "\",");
-							reply.append("\"online\":\"" + host.getStatus().getCurrentPlayers() + "\",");
-							reply.append("\"maxOnline\":\"" + host.getStatus().getMaximumPlayers() + "\",");
-							reply.append("\"version\":\"" + host.getStatus().getVersion() + "\"}");
-							
-							byte[] data = reply.toString().getBytes();
-							dos.writeInt(data.length);
-							dos.write(data);
-						}
-					}
-					break;
-					case 2:
-					{
-						// Trade index and password for IP:port
-						int index = dis.readInt();
-						if(index >= 0 && index < hosts.size())
-						{
-							OnlineHost oh = hosts.get(index);
-							byte[] data = new byte[dis.readShort()];
-							String md5p;
-							if(data.length == 0)
-								md5p = null;
-							else
-							{
-								dis.read(data);
-								md5p = MD5.encrypt(data);
-							}
-							
-							// Give IP:port if password's MD5 match with
-							// provided by host.
-							if(Objects.equals(md5p, oh.passwordMD5))
-							{
-								dos.writeBoolean(true);
-								data = (oh.ip + ":" + oh.port).getBytes();
-								dos.writeByte(data.length);
-								dos.write(data);
-							} else
-								dos.writeBoolean(false);
-						}
-					}
-					break;
-					case 10:
-					{
-						// Add hosting player
-						String ip = ((InetSocketAddress) c.getRemoteSocketAddress()).getAddress().getHostAddress();
-						int port = dis.readInt();
-						byte[] data = new byte[dis.readByte()];
-						dis.read(data);
-						String username = new String(data);
-						data = new byte[dis.readByte()];
-						dis.read(data);
-						String passMD5 = new String(data);
-						
-						if(!pointers.containsKey(username.toLowerCase()))
-						{
-							OnlineHost oh = new OnlineHost(username, ip, passMD5, port);
-							pointers.put(username.toLowerCase(), oh);
-							hosts.add(oh);
-							dos.writeBoolean(true);
-						} else
-							dos.writeBoolean(false);
-					}
-					break;
-					default:
-					break;
-					}
+					handleClient(c);
 				} catch(Throwable err)
 				{
 					// I'd rather spam some console than have to restart the
@@ -173,6 +88,99 @@ public class AlwaysOnlineHost
 			
 			stop();
 		}
+	}
+	
+	protected void handleClient(Socket c) throws Throwable
+	{
+		DataInputStream dis = new DataInputStream(c.getInputStream());
+		DataOutputStream dos = new DataOutputStream(c.getOutputStream());
+		
+		switch(dis.readByte())
+		{
+		case 0:
+		{
+			// Get amount of hosting players
+			dos.writeInt(hosts.size());
+		}
+		break;
+		case 1:
+		{
+			// Get by index
+			int i = dis.readInt();
+			if(i >= 0 && i < hosts.size())
+			{
+				OnlineHost host = hosts.get(i);
+				StringBuilder reply = new StringBuilder("{");
+				if(host.passwordMD5 != null)
+					reply.append("\"password\":\"" + host.passwordMD5 + "\",");
+				reply.append("\"owner\":\"" + host.player + "\"}");
+				byte[] data = reply.toString().getBytes();
+				dos.writeInt(data.length);
+				dos.write(data);
+			}
+		}
+		break;
+		case 2:
+		{
+			// Trade index and password for IP:port
+			int index = dis.readInt();
+			if(index >= 0 && index < hosts.size())
+			{
+				OnlineHost oh = hosts.get(index);
+				byte[] data = new byte[dis.readShort()];
+				String md5p;
+				if(data.length == 0)
+					md5p = null;
+				else
+				{
+					dis.read(data);
+					md5p = MD5.encrypt(data);
+				}
+				
+				String rem = oh.passwordMD5;
+				if(rem.isEmpty())
+					rem = null;
+					
+				// Give IP:port if password's MD5 match with
+				// provided by host.
+				if(Objects.equals(md5p, rem))
+				{
+					dos.writeBoolean(true);
+					data = (oh.ip + ":" + oh.port).getBytes();
+					dos.writeByte(data.length);
+					dos.write(data);
+				} else
+					dos.writeBoolean(false);
+			}
+		}
+		break;
+		case 10:
+		{
+			// Add hosting player
+			String ip = ((InetSocketAddress) c.getRemoteSocketAddress()).getAddress().getHostAddress();
+			int port = dis.readInt();
+			byte[] data = new byte[dis.readByte()];
+			dis.read(data);
+			String username = new String(data);
+			data = new byte[dis.readByte()];
+			dis.read(data);
+			String passMD5 = new String(data);
+			
+			if(!pointers.containsKey(username.toLowerCase()))
+			{
+				OnlineHost oh = new OnlineHost(username, ip, passMD5, port);
+				pointers.put(username.toLowerCase(), oh);
+				hosts.add(oh);
+				dos.writeBoolean(true);
+			} else
+				dos.writeBoolean(false);
+		}
+		break;
+		default:
+		break;
+		}
+		
+		dos.flush();
 	}
 	
 	public void stop()
@@ -332,6 +340,7 @@ public class AlwaysOnlineHost
 			{
 				String n = "\u0000";
 				serverData = rawServerData.split(n + n + n);
+				System.out.println(serverData.length + " | " + rawServerData);
 				if(serverData != null && serverData.length >= NUM_FIELDS)
 				{
 					serverUp = true;
