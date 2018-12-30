@@ -120,7 +120,7 @@ public class AlwaysOnlineHost
 								dis.read(data);
 								md5p = MD5.encrypt(data);
 							}
-								
+							
 							// Give IP:port if password's MD5 match with
 							// provided by host.
 							if(Objects.equals(md5p, oh.passwordMD5))
@@ -151,7 +151,9 @@ public class AlwaysOnlineHost
 							OnlineHost oh = new OnlineHost(username, ip, passMD5, port);
 							pointers.put(username.toLowerCase(), oh);
 							hosts.add(oh);
-						}
+							dos.writeBoolean(true);
+						} else
+							dos.writeBoolean(false);
 					}
 					break;
 					default:
