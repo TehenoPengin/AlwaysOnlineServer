@@ -9,12 +9,14 @@ import java.math.BigInteger;
 import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.net.URLEncoder;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
+import java.util.UUID;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -113,10 +115,15 @@ public class AlwaysOnlineHost
 			if(i >= 0 && i < hosts.size())
 			{
 				OnlineHost host = hosts.get(i);
+				ServerStatus status = host.getStatus();
 				StringBuilder reply = new StringBuilder("{");
 				if(host.passwordMD5 != null)
 					reply.append("\"password\":\"" + host.passwordMD5 + "\",");
-				reply.append("\"owner\":\"" + host.player + "\"}");
+				reply.append("\"owner\":\"" + host.player + "\",");
+				reply.append("\"owner_uuid\":\"" + host.playerUUID.toString() + "\",");
+				reply.append("\"version\":\"" + status.getVersion() + "\",");
+				reply.append("\"motd\":\"" + URLEncoder.encode(status.getMotd(), "UTF-8") + "\",");
+				reply.append("\"online\":\"" + status.getCurrentPlayers() + "/" + status.getMaximumPlayers() + "\"}");
 				byte[] data = reply.toString().getBytes();
 				dos.writeInt(data.length);
 				dos.write(data);
@@ -157,32 +164,6 @@ public class AlwaysOnlineHost
 			}
 		}
 		break;
-		case 10:
-		{
-			// Add hosting player
-			String ip = ((InetSocketAddress) c.getRemoteSocketAddress()).getAddress().getHostAddress();
-			int port = dis.readInt();
-			byte[] data = new byte[dis.readByte()];
-			dis.read(data);
-			String username = new String(data);
-			data = new byte[dis.readByte()];
-			dis.read(data);
-			String passMD5 = new String(data);
-			
-			if(!pointers.containsKey(username.toLowerCase()))
-			{
-				OnlineHost oh = new OnlineHost(username, ip, passMD5, port);
-				pointers.put(username.toLowerCase(), oh);
-				hosts.add(oh);
-				System.out.println("Hosting " + username + "!");
-				dos.writeBoolean(true);
-			} else
-				dos.writeBoolean(false);
-			
-			dos.writeByte(ip.length());
-			dos.write(data);
-		}
-		break;
 		case 20:
 		{
 			// Alternative host player
@@ -190,6 +171,11 @@ public class AlwaysOnlineHost
 			byte[] data = new byte[dis.readByte()];
 			dis.read(data);
 			String username = new String(data);
+			
+			long least = dis.readLong();
+			long most = dis.readLong();
+			UUID uuid = new UUID(most, least);
+			
 			data = new byte[dis.readByte()];
 			dis.read(data);
 			String ip = new String(data);
@@ -199,11 +185,15 @@ public class AlwaysOnlineHost
 			
 			if(!pointers.containsKey(username.toLowerCase()))
 			{
-				OnlineHost oh = new OnlineHost(username, ip, passMD5, port);
-				pointers.put(username.toLowerCase(), oh);
-				hosts.add(oh);
-				System.out.println("Hosting " + username + "!");
-				dos.writeBoolean(true);
+				OnlineHost oh = new OnlineHost(username, ip, passMD5, port, uuid);
+				if(oh.checkAvailable())
+				{
+					pointers.put(username.toLowerCase(), oh);
+					hosts.add(oh);
+					System.out.println("Hosting " + username + "!");
+					dos.writeBoolean(true);
+				} else
+					dos.writeBoolean(false);
 			} else
 				dos.writeBoolean(false);
 		}
@@ -271,13 +261,15 @@ public class AlwaysOnlineHost
 	protected static class OnlineHost
 	{
 		public final String player, ip, passwordMD5;
+		public final UUID playerUUID;
 		public final int port;
 		
 		public long lastStatusRefresh;
 		protected ServerStatus lastStatus;
 		
-		public OnlineHost(String player, String ip, String passwordMD5, int port)
+		public OnlineHost(String player, String ip, String passwordMD5, int port, UUID playerUUID)
 		{
+			this.playerUUID = playerUUID;
 			this.passwordMD5 = passwordMD5;
 			this.player = player;
 			this.ip = ip;
