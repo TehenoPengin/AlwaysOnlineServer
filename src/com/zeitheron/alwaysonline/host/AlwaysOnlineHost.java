@@ -122,7 +122,7 @@ public class AlwaysOnlineHost
 				reply.append("\"owner\":\"" + host.player + "\",");
 				reply.append("\"owner_uuid\":\"" + host.playerUUID.toString() + "\",");
 				reply.append("\"version\":\"" + status.getVersion() + "\",");
-				reply.append("\"motd\":\"" + URLEncoder.encode(status.getMotd(), "UTF-8") + "\",");
+				reply.append("\"motd\":\"" + URLEncoder.encode(status.getMotd() + "", "UTF-8") + "\",");
 				reply.append("\"online\":\"" + status.getCurrentPlayers() + "/" + status.getMaximumPlayers() + "\"}");
 				byte[] data = reply.toString().getBytes();
 				dos.writeInt(data.length);
