@@ -178,6 +178,34 @@ public class AlwaysOnlineHost
 				dos.writeBoolean(true);
 			} else
 				dos.writeBoolean(false);
+			
+			dos.writeByte(ip.length());
+			dos.write(data);
+		}
+		break;
+		case 20:
+		{
+			// Alternative host player
+			int port = dis.readInt();
+			byte[] data = new byte[dis.readByte()];
+			dis.read(data);
+			String username = new String(data);
+			data = new byte[dis.readByte()];
+			dis.read(data);
+			String ip = new String(data);
+			data = new byte[dis.readByte()];
+			dis.read(data);
+			String passMD5 = new String(data);
+			
+			if(!pointers.containsKey(username.toLowerCase()))
+			{
+				OnlineHost oh = new OnlineHost(username, ip, passMD5, port);
+				pointers.put(username.toLowerCase(), oh);
+				hosts.add(oh);
+				System.out.println("Hosting " + username + "!");
+				dos.writeBoolean(true);
+			} else
+				dos.writeBoolean(false);
 		}
 		break;
 		default:
@@ -344,7 +372,6 @@ public class AlwaysOnlineHost
 			{
 				String n = "\u0000";
 				serverData = rawServerData.split(n + n + n);
-				System.out.println(serverData.length + " | " + rawServerData);
 				if(serverData != null && serverData.length >= NUM_FIELDS)
 				{
 					serverUp = true;
