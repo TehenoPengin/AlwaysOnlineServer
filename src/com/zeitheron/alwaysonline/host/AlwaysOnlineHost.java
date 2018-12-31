@@ -59,10 +59,13 @@ public class AlwaysOnlineHost
 			{
 				hosts.remove(i);
 				pointers.remove(host.player.toLowerCase());
-				System.out.println("Removed " + host.player);
+				System.out.println("Removed " + host.player + "!");
 				--i;
 			}
 		}
+		
+		// Clean RAM, keep as little data as possible
+		System.gc();
 	}
 	
 	protected void handleServerThread()
@@ -171,6 +174,7 @@ public class AlwaysOnlineHost
 				OnlineHost oh = new OnlineHost(username, ip, passMD5, port);
 				pointers.put(username.toLowerCase(), oh);
 				hosts.add(oh);
+				System.out.println("Hosting " + username + "!");
 				dos.writeBoolean(true);
 			} else
 				dos.writeBoolean(false);
