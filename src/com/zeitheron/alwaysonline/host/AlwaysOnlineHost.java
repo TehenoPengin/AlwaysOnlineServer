@@ -17,9 +17,12 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+
+import org.apache.logging.log4j.core.appender.rolling.action.IfFileName;
 
 /**
  * You are free to include this class anywhere. Handles the server stuff for
@@ -29,6 +32,7 @@ import java.util.concurrent.TimeUnit;
 public class AlwaysOnlineHost
 {
 	protected ScheduledExecutorService scheduler;
+	protected ExecutorService offthreadStuff;
 	protected Thread listener;
 	protected int port;
 	
@@ -46,6 +50,7 @@ public class AlwaysOnlineHost
 			throw new IllegalStateException("Host already started!");
 		scheduler = Executors.newScheduledThreadPool(1);
 		scheduler.scheduleAtFixedRate(this::handleClientChecks, 20, 30, TimeUnit.SECONDS);
+		offthreadStuff = Executors.newFixedThreadPool(4);
 		listener = new Thread(this::handleServerThread);
 		listener.setName("AlwaysOnlineHostMain");
 		listener.start();
@@ -76,9 +81,11 @@ public class AlwaysOnlineHost
 		{
 			while(true)
 			{
-				try(Socket c = s.accept())
+				try
 				{
-					handleClient(c);
+					Socket c = s.accept();
+					if(handleClient(c))
+						c.close();
 				} catch(Throwable err)
 				{
 					// I'd rather spam some console than have to restart the
@@ -95,7 +102,7 @@ public class AlwaysOnlineHost
 		}
 	}
 	
-	protected void handleClient(Socket c) throws Throwable
+	protected boolean handleClient(Socket c) throws Throwable
 	{
 		DataInputStream dis = new DataInputStream(c.getInputStream());
 		DataOutputStream dos = new DataOutputStream(c.getOutputStream());
@@ -112,24 +119,35 @@ public class AlwaysOnlineHost
 		{
 			// Get by index
 			int i = dis.readInt();
-			if(i >= 0 && i < hosts.size())
+			offthreadStuff.submit(() ->
 			{
-				OnlineHost host = hosts.get(i);
-				ServerStatus status = host.getStatus();
-				StringBuilder reply = new StringBuilder("{");
-				if(host.passwordMD5 != null)
-					reply.append("\"password\":\"" + host.passwordMD5 + "\",");
-				reply.append("\"owner\":\"" + host.player + "\",");
-				reply.append("\"owner_uuid\":\"" + host.playerUUID.toString() + "\",");
-				reply.append("\"version\":\"" + status.getVersion() + "\",");
-				reply.append("\"motd\":\"" + URLEncoder.encode(status.getMotd() + "", "UTF-8") + "\",");
-				reply.append("\"online\":\"" + status.getCurrentPlayers() + "/" + status.getMaximumPlayers() + "\"}");
-				byte[] data = reply.toString().getBytes();
-				dos.writeInt(data.length);
-				dos.write(data);
-			}
+				try(Socket sc = c)
+				{
+					if(i >= 0 && i < hosts.size())
+					{
+						OnlineHost host = hosts.get(i);
+						ServerStatus status = host.getStatus();
+						StringBuilder reply = new StringBuilder("{");
+						if(host.passwordMD5 != null)
+							reply.append("\"password\":\"" + host.passwordMD5 + "\",");
+						reply.append("\"owner\":\"" + host.player + "\",");
+						reply.append("\"owner_uuid\":\"" + host.playerUUID.toString() + "\",");
+						reply.append("\"version\":\"" + status.getVersion() + "\",");
+						reply.append("\"motd\":\"" + URLEncoder.encode(status.getMotd() + "", "UTF-8") + "\",");
+						reply.append("\"online\":\"" + status.getCurrentPlayers() + "/" + status.getMaximumPlayers() + "\"}");
+						byte[] data = reply.toString().getBytes();
+						dos.writeInt(data.length);
+						dos.write(data);
+					}
+					
+					dos.flush();
+				} catch(IOException ioe)
+				{
+				}
+			});
+			
+			return false;
 		}
-		break;
 		case 2:
 		{
 			// Trade index and password for IP:port
@@ -182,36 +200,50 @@ public class AlwaysOnlineHost
 			data = new byte[dis.readByte()];
 			dis.read(data);
 			String passMD5 = new String(data);
-			
 			if(!pointers.containsKey(username.toLowerCase()))
 			{
-				OnlineHost oh = new OnlineHost(username, ip, passMD5, port, uuid);
-				if(oh.checkAvailable())
+				offthreadStuff.submit(() ->
 				{
-					pointers.put(username.toLowerCase(), oh);
-					hosts.add(oh);
-					System.out.println("Hosting " + username + "!");
-					dos.writeBoolean(true);
-				} else
-					dos.writeBoolean(false);
+					try(Socket cs = c)
+					{
+						OnlineHost oh = new OnlineHost(username, ip, passMD5, port, uuid);
+						if(oh.checkAvailable())
+						{
+							pointers.put(username.toLowerCase(), oh);
+							hosts.add(oh);
+							System.out.println("Hosting " + username + "!");
+							dos.writeBoolean(true);
+						} else
+							dos.writeBoolean(false);
+						
+						dos.flush();
+					} catch(IOException ioe)
+					{
+					}
+				});
+				
+				return false;
 			} else
 				dos.writeBoolean(false);
 		}
-		break;
 		default:
 		break;
 		}
 		
 		dos.flush();
+		return true;
 	}
 	
 	public void stop()
 	{
-		if(scheduler == null || listener == null)
+		if(scheduler == null || listener == null || offthreadStuff == null)
 			throw new IllegalStateException("Host not started!");
 		
 		scheduler.shutdownNow();
 		scheduler = null;
+		
+		offthreadStuff.shutdownNow();
+		offthreadStuff = null;
 		
 		listener.interrupt();
 		listener = null;
