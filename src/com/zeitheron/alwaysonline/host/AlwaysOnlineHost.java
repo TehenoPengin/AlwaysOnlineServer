@@ -13,6 +13,7 @@ import java.net.URLEncoder;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
@@ -129,14 +130,14 @@ public class AlwaysOnlineHost
 						ServerStatus status = host.getStatus();
 						StringBuilder reply = new StringBuilder("{");
 						if(host.passwordMD5 != null)
-							reply.append("\"password\":\"" + host.passwordMD5 + "\",");
-						reply.append("\"owner\":\"" + host.player + "\",");
-						reply.append("\"owner_uuid\":\"" + host.playerUUID.toString() + "\",");
-						reply.append("\"version\":\"" + status.getVersion() + "\",");
-						reply.append("\"motd\":\"" + URLEncoder.encode(status.getMotd() + "", "UTF-8") + "\",");
-						reply.append("\"online\":\"" + status.getCurrentPlayers() + "/" + status.getMaximumPlayers() + "\"}");
+							reply.append("\"p\":" + (host.passwordMD5 != null && !host.passwordMD5.isEmpty() ? 1 : 0) + ",");
+						reply.append("\"o\":\"" + host.player + "\",");
+						reply.append("\"u\":\"" + host.playerUUID.toString() + "\",");
+						reply.append("\"v\":\"" + status.getVersion() + "\",");
+						reply.append("\"m\":\"" + Base64.getMimeEncoder().encodeToString((status.getMotd() + "").getBytes()) + "\",");
+						reply.append("\"l\":\"" + status.getCurrentPlayers() + "/" + status.getMaximumPlayers() + "\"}");
 						byte[] data = reply.toString().getBytes();
-						dos.writeInt(data.length);
+						dos.writeShort(data.length);
 						dos.write(data);
 					}
 					
@@ -200,31 +201,47 @@ public class AlwaysOnlineHost
 			data = new byte[dis.readByte()];
 			dis.read(data);
 			String passMD5 = new String(data);
-			if(!pointers.containsKey(username.toLowerCase()))
+			
+			offthreadStuff.submit(() ->
 			{
-				offthreadStuff.submit(() ->
+				try(Socket cs = c)
 				{
-					try(Socket cs = c)
+					if(pointers.containsKey(username.toLowerCase()))
+					{
+						OnlineHost oh = pointers.get(username.toLowerCase());
+						if(!oh.checkAvailable())
+							pointers.remove(username.toLowerCase());
+					}
+					
+					if(!pointers.containsKey(username.toLowerCase()))
 					{
 						OnlineHost oh = new OnlineHost(username, ip, passMD5, port, uuid);
-						if(oh.checkAvailable())
+						
+						r: if(oh.checkAvailable())
 						{
+							for(int i = 0; i < hosts.size(); ++i)
+								if(hosts.get(i).isIpEqual(oh))
+								{
+									dos.writeBoolean(false);
+									break r;
+								}
+							
 							pointers.put(username.toLowerCase(), oh);
 							hosts.add(oh);
 							System.out.println("Hosting " + username + "!");
 							dos.writeBoolean(true);
 						} else
 							dos.writeBoolean(false);
-						
-						dos.flush();
-					} catch(IOException ioe)
-					{
-					}
-				});
-				
-				return false;
-			} else
-				dos.writeBoolean(false);
+					} else
+						dos.writeBoolean(false);
+					
+					dos.flush();
+				} catch(IOException ioe)
+				{
+				}
+			});
+			
+			return false;
 		}
 		default:
 		break;
@@ -249,7 +266,7 @@ public class AlwaysOnlineHost
 		listener = null;
 	}
 	
-	protected static void sleep(long ms)
+	public static void sleep(long ms)
 	{
 		try
 		{
@@ -308,10 +325,15 @@ public class AlwaysOnlineHost
 			this.port = port;
 		}
 		
+		public boolean isIpEqual(OnlineHost oh)
+		{
+			return oh != null && Objects.equals(oh.ip, ip) && port == oh.port;
+		}
+		
 		public ServerStatus getStatus()
 		{
-			if(lastStatus == null || System.currentTimeMillis() - lastStatusRefresh >= 10000L)
-				lastStatus = ServerStatus.ping(ip, port, 2000);
+			if(lastStatus == null || System.currentTimeMillis() - lastStatusRefresh >= 15000L)
+				lastStatus = ServerStatus.ping(ip, port, 3000);
 			return lastStatus;
 		}
 		
